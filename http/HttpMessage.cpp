@@ -671,6 +671,7 @@ void HttpRequest::Reset() {
     Init();
     url.clear();
     query_params.clear();
+    request_state.clear();
 }
 
 void HttpRequest::DumpUrl() {

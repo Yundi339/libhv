@@ -395,6 +395,10 @@ public:
     std::string         proxy_username;
     std::string         proxy_password;
 
+    // Framework-only metadata. It is never serialized as an HTTP header.
+    // The request lifecycle clears it in Reset().
+    std::map<std::string, std::string> request_state;
+
     HttpRequest();
 
     void Init();
