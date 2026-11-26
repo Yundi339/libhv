@@ -36,6 +36,7 @@ HttpHandler::HttpHandler(hio_t* io) :
     proxy_connected(0),
     forward_proxy(0),
     reverse_proxy(0),
+    http2_pending(0),
     ip{'\0'},
     port(0),
     pid(0),
@@ -163,6 +164,31 @@ bool HttpHandler::SwitchHTTP2() {
     resp->http_minor = req->http_minor = 0;
     parser->InitRequest(req.get());
     return true;
+}
+
+bool HttpHandler::CanUpgradeHTTP2() const {
+#if WITH_NGHTTP2
+    // h2c upgrade belongs to cleartext HTTP/1.1. HTTP/2 over TLS uses ALPN.
+    return !ssl;
+#else
+    return false;
+#endif
+}
+
+bool HttpHandler::isHTTP2Upgrade(const char* upgrade_protocol) const {
+    return stricmp(upgrade_protocol, "h2c") == 0;
+}
+
+void HttpHandler::finishHTTP2Upgrade() {
+    http2_pending = 0;
+    if (!SwitchHTTP2()) {
+        hlogw("[%s:%d] unsupported HTTP2", ip, port);
+        SetError(ERR_INVALID_PROTOCOL);
+        return;
+    }
+
+    // NOTE: send HTTP2_SETTINGS frame
+    SendHttpResponse(false);
 }
 
 bool HttpHandler::SwitchWebSocket() {
@@ -335,6 +361,18 @@ void HttpHandler::onMessageComplete() {
     }
 
     addResponseHeaders();
+
+    // HTTP/2 over TLS is negotiated by ALPN. Ignore a cleartext h2c upgrade
+    // when it is unsupported or arrives on TLS and serve the HTTP/1.1 request.
+    if (upgrade) {
+        auto iter_upgrade = req->headers.find("upgrade");
+        if (iter_upgrade != req->headers.end() &&
+            isHTTP2Upgrade(iter_upgrade->second.c_str()) &&
+            !CanUpgradeHTTP2()) {
+            hlogw("[%s:%d] ignore unsupported h2c upgrade", ip, port);
+            upgrade = 0;
+        }
+    }
 
     // upgrade ? handleUpgrade : HandleHttpRequest
     if (upgrade) {
@@ -752,6 +790,11 @@ int HttpHandler::FeedRecvData(const char* data, size_t len) {
             error = ERR_PARSE;
             return -1;
         }
+        // The old parser is still executing the message-complete callback while
+        // an upgrade is requested. Replace it only after that call has returned.
+        if (http2_pending) {
+            finishHTTP2Upgrade();
+        }
         break;
     case HttpHandler::WEBSOCKET:
         nfeed = ws_parser->FeedRecvData(data, len);
@@ -978,8 +1021,8 @@ int HttpHandler::handleUpgrade(const char* upgrade_protocol) {
         return upgradeWebSocket();
     }
 
-    // h2/h2c
-    if (strnicmp(upgrade_protocol, "h2", 2) == 0) {
+    // h2c
+    if (isHTTP2Upgrade(upgrade_protocol)) {
         return upgradeHTTP2();
     }
 
@@ -1038,16 +1081,18 @@ int HttpHandler::upgradeHTTP2() {
     resp->headers["Connection"] = "Upgrade";
     resp->headers["Upgrade"] = "h2c";
 
-    SendHttpResponse();
-
-    if (!SwitchHTTP2()) {
+    if (!CanUpgradeHTTP2()) {
         hlogw("[%s:%d] unsupported HTTP2", ip, port);
         return SetError(ERR_INVALID_PROTOCOL);
     }
 
-    // NOTE: send HTTP2_SETTINGS frame
-    SendHttpResponse(false);
+    SendHttpResponse();
 
+    // The caller must finish the parser switch after Http1Parser::FeedRecvData
+    // returns. Destroying this parser inside its own callback causes a UAF.
+    http2_pending = 1;
+
+    // NOTE: send HTTP2_SETTINGS frame
     return 0;
 }
 

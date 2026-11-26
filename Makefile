@@ -309,8 +309,10 @@ ifeq ($(WITH_HTTP), yes)
 ifeq ($(WITH_HTTP_SERVER), yes)
 	$(MAKE) libhv
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Ievent -Icpputil -Ihttp -Ihttp/server -o bin/file_cache_test unittest/file_cache_test.cpp -Llib -lhv -pthread
+	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Ievent -Icpputil -Ievpp -Issl -Ihttp -Ihttp/server -o bin/http_upgrade_test unittest/http_upgrade_test.cpp -Llib -lhv -pthread
 else
 	$(RM) bin/file_cache_test
+	$(RM) bin/http_upgrade_test
 endif
 else
 	$(RM) bin/file_cache_test

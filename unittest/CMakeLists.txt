@@ -94,7 +94,10 @@ if(WITH_HTTP AND WITH_HTTP_SERVER)
 add_executable(file_cache_test file_cache_test.cpp)
 target_include_directories(file_cache_test PRIVATE .. ../base ../cpputil ../event ../http ../http/server)
 target_link_libraries(file_cache_test ${HV_LIBRARIES})
-set(HTTP_UNITTEST_TARGETS file_cache_test)
+add_executable(http_upgrade_test http_upgrade_test.cpp)
+target_include_directories(http_upgrade_test PRIVATE .. ../base ../cpputil ../event ../evpp ../http ../http/server ../ssl)
+target_link_libraries(http_upgrade_test ${HV_LIBRARIES})
+set(HTTP_UNITTEST_TARGETS file_cache_test http_upgrade_test)
 endif()
 
 # ------redis------

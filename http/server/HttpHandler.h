@@ -40,6 +40,7 @@ public:
     unsigned proxy_connected    :1;
     unsigned forward_proxy      :1;
     unsigned reverse_proxy      :1;
+    unsigned http2_pending      :1;
 
     // peeraddr
     char                    ip[64];
@@ -119,6 +120,7 @@ public:
 
     // HTTP2
     bool SwitchHTTP2();
+    bool CanUpgradeHTTP2() const;
 
     // websocket
     bool SwitchWebSocket();
@@ -171,6 +173,8 @@ private:
     int handleUpgrade(const char* upgrade_protocol);
     int upgradeWebSocket();
     int upgradeHTTP2();
+    bool isHTTP2Upgrade(const char* upgrade_protocol) const;
+    void finishHTTP2Upgrade();
 
     // proxy
     int handleProxy();
