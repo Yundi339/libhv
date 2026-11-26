@@ -15,7 +15,7 @@ using namespace hv;
         }                                                                                \
     } while (0)
 
-#if defined(WITH_NGHTTP2) && WITH_NGHTTP2
+#if defined(WITH_NGHTTP2)
 #define HAVE_HTTP2 1
 #else
 #define HAVE_HTTP2 0
