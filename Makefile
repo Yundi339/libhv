@@ -11,6 +11,11 @@ endif
 BUILD_SHARED ?= yes
 BUILD_STATIC ?= yes
 
+HTTP_UPGRADE_TEST_CXXFLAGS =
+ifeq ($(WITH_NGHTTP2), yes)
+HTTP_UPGRADE_TEST_CXXFLAGS += -DWITH_NGHTTP2
+endif
+
 LIBHV_SRCDIRS = $(CORE_SRCDIRS) util
 LIBHV_HEADERS = hv.h hconfig.h hexport.h
 LIBHV_HEADERS += $(BASE_HEADERS) $(SSL_HEADERS) $(EVENT_HEADERS) $(UTIL_HEADERS)
@@ -312,7 +317,7 @@ ifeq ($(WITH_HTTP), yes)
 ifeq ($(WITH_HTTP_SERVER), yes)
 	$(MAKE) libhv
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Ievent -Icpputil -Ihttp -Ihttp/server -o bin/file_cache_test unittest/file_cache_test.cpp -Llib -lhv -pthread
-	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Ievent -Icpputil -Ievpp -Issl -Ihttp -Ihttp/server -o bin/http_upgrade_test unittest/http_upgrade_test.cpp -Llib -lhv -pthread
+	$(CXX) -g -Wall -O0 -std=c++11 $(HTTP_UPGRADE_TEST_CXXFLAGS) -I. -Ibase -Ievent -Icpputil -Ievpp -Issl -Ihttp -Ihttp/server -o bin/http_upgrade_test unittest/http_upgrade_test.cpp -Llib -lhv -pthread
 else
 	$(RM) bin/file_cache_test
 	$(RM) bin/http_upgrade_test
