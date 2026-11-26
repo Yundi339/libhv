@@ -1,13 +1,13 @@
 # 项目分支相对原版 libhv 的改动
 
-本文记录 Intertwine 使用的 project/main 分支在原版 libhv 基础上增加的改动，重点是 HTTP 静态文件缓存和发送路径。
+本文记录 Intertwine 使用的 project/main 分支在原版 libhv 基础上增加的改动，重点是 HTTP 静态文件缓存、发送路径和 h2c 升级安全。
 
 ## 对比口径
 
 - 原版基线：ithewei/libhv 的共同祖先 9bfb2b3，版本描述为 v1.3.4-28-g9bfb2b3。
-- 项目分支：Yundi339/libhv 的 project/main，记录时的头提交为 e9e9f93。
+- 项目分支：Yundi339/libhv 的 project/main，记录时的头提交为 0abbf94。
 - 对比命令：git diff upstream/master...project/main。
-- 当前净差异：8 个文件，453 行新增，106 行删除。
+- 当前净差异：12 个文件，732 行新增，137 行删除。
 
 上游 master 在基线之后继续演进，本文只记录 project/main 相对共同基线新增的部分，不把上游已经独立实现的改动算作本项目分支的新增能力。
 
@@ -17,6 +17,7 @@
 | --- | --- | --- |
 | http/server/FileCache | 可配置的头部预留和缓存上限、每条目互斥锁、不可变发布语义、同路径加载合并 | 修复并发刷新问题，降低大响应头和大文件对缓存的干扰 |
 | http/server/HttpHandler | 响应头过大时拆分发送、发送期间持有缓存条目、请求头早期拒绝立即响应 | 避免 buffer 被并发替换，改善大请求和异常请求行为 |
+| HTTP/2 h2c 升级 | 精确识别 h2c，限制升级条件，延迟替换 parser | 避免 TLS 上错误返回 101，修复旧 parser 回调期间的 use-after-free |
 | 测试与构建 | 新增 FileCache 单元测试，并接入 Make 和 CMake | 覆盖刷新、失败清理、并发加载和头部回退场景 |
 
 ## FileCache 增强
@@ -81,6 +82,18 @@ SendHttpResponse() 生成发送 buffer 前会保留 file_cache_ptr 并锁定条�
 
 请求头校验失败时立即发送错误响应并关闭 keep-alive，不再继续等待请求体。对超大请求体或恶意请求，这能更早释放连接和内存。
 
+### h2c 升级安全
+
+原版收到 Upgrade: h2 或 h2c 时，会先发送 101 Switching Protocols，再尝试创建 HTTP/2 parser。未启用 nghttp2 时协议切换失败，但客户端已经收到 101，导致连接挂死或报协议错误。启用 nghttp2 后，原版会在 Http1Parser::FeedRecvData 回调内销毁旧 parser，旧 C parser 回调返回后继续访问已释放对象，形成 use-after-free。
+
+项目分支的行为如下：
+
+- 只接受精确的 h2c 升级，不再把任意 h2 开头的 Upgrade 值当作 HTTP/2。
+- h2c Upgrade 只允许用于明文 HTTP/1.1；TLS 上的 HTTP/2 应由 ALPN 协商，因此 HTTPS 上的 h2c Upgrade 会被忽略并按 HTTP/1.1 处理。
+- WITH_NGHTTP2=OFF 时忽略 h2c Upgrade，正常执行 HTTP/1.1 路由，不再发送 101。
+- WITH_NGHTTP2=ON 且条件满足时，先发送 101，再把 parser 替换延迟到 Http1Parser::FeedRecvData 返回后执行，随后发送 HTTP/2 SETTINGS。
+- Make 和 CMake 会把 WITH_NGHTTP2 编译开关同步传给升级测试，避免库和测试对能力开关的判断不一致。
+
 ## 与 HTTP 服务配置联动
 
 HttpService::max_file_cache_size 会同步到每个 HTTP loop 的 FileCache::max_file_size。发送完成后，超过当前服务配置上限的条目会从缓存移除。原实现使用编译期硬编码上限，服务配置调大后行为不一致。
@@ -95,6 +108,12 @@ HttpService::max_file_cache_size 会同步到每个 HTTP loop 的 FileCache::max
 - 超大响应头回退到文件内容视图。
 - 同一路径并发冷加载只产生一个发布条目。
 - 并发刷新后所有新请求拿到同一份新数据，旧请求仍持有旧数据。
+
+新增 unittest/http_upgrade_test.cpp，覆盖 h2c 升级路径：
+
+- WITH_NGHTTP2=OFF 时按 HTTP/1.1 处理，不返回 101。
+- WITH_NGHTTP2=ON 且明文连接时切换到 HTTP_V2，并确认 pending 状态已消费。
+- TLS 连接上的 h2c Upgrade 按 HTTP/1.1 处理。
 
 测试已接入：
 
@@ -119,4 +138,4 @@ HttpService::max_file_cache_size 会同步到每个 HTTP loop 的 FileCache::max
 
 ## 上游同步状态
 
-本文记录的是 project/main 的自有增强。截至 2026-11-26，上游 ithewei/libhv master 已经有 36 个提交不在 project/main 历史中，其中包含 FileCache、HTTP/2、代理、DNS、WebSocket 和构建系统的后续修复。定期升级 project/main 时，应先对比上游最新变更，再保留这里针对 Intertwine 场景的 FileCache 语义。
+本文记录的是 project/main 的自有增强。截至 2026-11-26，上游 ithewei/libhv master 已经有 36 个提交不在 project/main 历史中，其中包含 FileCache、HTTP/2、代理、DNS、WebSocket 和构建系统的后续修复。定期升级 project/main 时，应先对比上游最新变更，再保留这里针对 Intertwine 场景的 FileCache 和 h2c 升级语义。
